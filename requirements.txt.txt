@@ -6,3 +6,6 @@ numpy
 tensorflow-cpu
 joblib
 scikit-learn
+feedparser
+transformers
+torch
