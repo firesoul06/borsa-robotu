@@ -33,7 +33,6 @@ def create_dataset(dataset, look_back=60, forecast_days=30):
 if analiz_butonu:
     st.info(f"{hisse_kodu} için veriler indiriliyor ve model eğitiliyor. Lütfen bekleyin...")
     
-    # İlerleme çubuğu ve spinner
     with st.spinner('Yapay Zeka hisse hareketlerini öğreniyor... (Bu işlem 30-60 sn sürebilir)'):
         
         # 1. VERİ ÇEKME
@@ -41,38 +40,38 @@ if analiz_butonu:
         start_date = end_date - datetime.timedelta(days=365*4) # 4 yıllık veri
         
         try:
-            # Not: yfinance bazı versiyonlarda multi-index döndürebilir, bunu düzeltiyoruz.
             df = yf.download(hisse_kodu, start=start_date, end=end_date, progress=False)
             
-            # Eğer veri boşsa veya hata varsa
             if df.empty:
                 st.error("Veri bulunamadı! Hisse kodunu doğru girdiğinizden emin olun (BIST için sonuna .IS ekleyin).")
             else:
+                # --- KRİTİK DÜZELTME: SÜTUN İSİMLERİNİ DÜZLEŞTİR ---
+                # Eğer veri ('Close', 'THYAO.IS') gibi gelirse bunu sadece 'Close' yapıyoruz.
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                # --------------------------------------------------
+
+                # Sadece 'Close' (Kapanış) sütununu al
+                if 'Close' in df.columns:
+                    df = df[['Close']]
+                else:
+                    st.error("Veri çekildi ama 'Close' fiyatı bulunamadı. Yapı değişmiş olabilir.")
+                    st.stop()
+
                 # Veriyi Görselleştirme
                 st.subheader("📊 Son 4 Yıllık Fiyat Grafiği")
-                
-                # 'Close' sütununu güvenli bir şekilde alalım
-                if 'Close' in df.columns:
-                    df_close = df[['Close']]
-                else:
-                    # Bazen yfinance sütun isimlerini değiştirir, ilk sütunu alalım
-                    df_close = df.iloc[:, 0:1]
-                
-                st.line_chart(df_close)
+                st.line_chart(df['Close'])
                 
                 # Veri Hazırlığı
-                dataset = df_close.values # Numpy dizisine çevir
+                dataset = df.values # Numpy dizisine çevir
                 
-                # --- KESİN ÇÖZÜM BURASI ---
-                # dataset[-1] bize [120.5] gibi bir dizi verir.
-                # dataset[-1, 0] diyerek direkt 120.5 sayısını alıyoruz.
-                current_price = float(dataset[-1, 0])
-                # --------------------------
+                # Son güncel fiyatı güvenli şekilde al
+                current_price = float(dataset[-1].item())
                 
                 scaler = MinMaxScaler(feature_range=(0, 1))
                 scaled_data = scaler.fit_transform(dataset)
                 
-                # Yeterli veri var mı kontrolü
+                # Yeterli veri kontrolü
                 if len(dataset) < (LOOK_BACK + FORECAST_DAYS + 10):
                     st.error("Hata: Bu hisse için yeterli geçmiş veri yok. Daha eski bir hisse deneyin.")
                 else:
@@ -89,6 +88,7 @@ if analiz_butonu:
                     model.add(Dense(units=1))
                     
                     model.compile(optimizer='adam', loss='mean_squared_error')
+                    # epochs ve batch_size ayarları
                     model.fit(x_train, y_train, batch_size=32, epochs=epoch_sayisi, verbose=0)
                     
                     # 3. TAHMİN
@@ -96,7 +96,7 @@ if analiz_butonu:
                     last_days_reshaped = np.reshape(last_days, (1, LOOK_BACK, 1))
                     predicted_price_scaled = model.predict(last_days_reshaped)
                     
-                    # Tahmini geri normalleştirme
+                    # Tahmini geri çevirme
                     tahmin_fiyat = float(scaler.inverse_transform(predicted_price_scaled)[0][0])
                     
                     # 4. SONUÇ GÖSTERİMİ
@@ -109,18 +109,18 @@ if analiz_butonu:
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        st.metric(label="Şu Anki Fiyat", value=f"{current_price:.2f}")
+                        st.metric(label="Şu Anki Fiyat", value=f"{current_price:.2f} TL")
                     
                     with col2:
-                        st.metric(label="Tahmini Fiyat", value=f"{tahmin_fiyat:.2f}", delta=f"{degisim:.2f}")
+                        st.metric(label="Tahmini Fiyat", value=f"{tahmin_fiyat:.2f} TL", delta=f"{degisim:.2f}")
                         
                     with col3:
                         if yuzde_degisim > 0:
-                            st.success(f"Yükseliş Bekleniyor: %{yuzde_degisim:.2f}")
+                            st.success(f"Yükseliş Bekleniyor: +%{yuzde_degisim:.2f}")
                         else:
                             st.error(f"Düşüş Bekleniyor: %{yuzde_degisim:.2f}")
                     
-                    st.warning("⚠️ YASAL UYARI: Bu proje sadece eğitim amaçlıdır ve yapay zeka denemesi niteliğindedir. Asla yatırım tavsiyesi olarak değerlendirilmemelidir.")
+                    st.warning("⚠️ YASAL UYARI: Bu proje sadece eğitim amaçlıdır. Yatırım tavsiyesi değildir.")
                 
         except Exception as e:
-            st.error(f"Bir hata oluştu: {e}")
+            st.error(f"Beklenmedik bir hata oluştu: {e}")
