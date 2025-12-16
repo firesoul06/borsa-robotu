@@ -8,9 +8,9 @@ from tensorflow.keras.layers import Dense, LSTM, Dropout
 import plotly.graph_objects as go
 
 # --- 1. SİSTEM VE SAYFA AYARLARI ---
-st.set_page_config(page_title="ProQuant Ultimate", layout="wide", page_icon="💎")
+st.set_page_config(page_title="ProQuant Ultimate (Precision Mode)", layout="wide", page_icon="💎")
 
-# Profesyonel Arayüz CSS (Göz yormayan Dark Mode)
+# Profesyonel Arayüz CSS
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -20,11 +20,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. GÜVENLİ VERİ MOTORU (DEFENSIVE PROGRAMMING) ---
+# --- 2. GÜVENLİ VERİ MOTORU ---
 
-@st.cache_data(ttl=300) # Temel veriler 5 dk önbellekte
+@st.cache_data(ttl=300) # Temel veriler 5 dk önbellek
 def get_fundamental_data(symbol):
-    """Şirket bilançosunu çeker. Hata durumunda programı çökertmez, None döner."""
+    """Şirket bilançosunu çeker. Hata durumunda programı çökertmez."""
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
@@ -33,13 +33,13 @@ def get_fundamental_data(symbol):
     except:
         return None
 
-@st.cache_data(ttl=60) # Fiyat verileri 1 dk önbellekte
-def get_technical_data(symbol, period="2y"):
-    """Fiyat verilerini ve indikatörleri hesaplar."""
+@st.cache_data(ttl=60) # Fiyat verileri 1 dk önbellek
+def get_technical_data(symbol, period="5y"):
+    """Fiyat verilerini çeker ve teknik indikatörleri hesaplar."""
     try:
         df = yf.download(symbol, period=period, progress=False)
         
-        # Kritik Düzeltme: MultiIndex Sütunları
+        # MultiIndex Sütun Düzeltme
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
@@ -47,27 +47,27 @@ def get_technical_data(symbol, period="2y"):
         
         # Veri Temizliği
         df = df.astype(float)
-        df.dropna(inplace=True) # Boş verileri temizle
+        df.dropna(inplace=True)
         
         # İndikatörler
-        # 1. SMA (Trend)
+        # 1. SMA
         df['SMA50'] = df['Close'].rolling(window=50).mean()
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         
-        # 2. RSI (Momentum)
+        # 2. RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # 3. ATR (Risk Yönetimi - Çok Önemli)
+        # 3. ATR (Risk Yönetimi)
         high_low = df['High'] - df['Low']
         high_close = np.abs(df['High'] - df['Close'].shift())
         low_close = np.abs(df['Low'] - df['Close'].shift())
         df['ATR'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
         
-        df.dropna(inplace=True) # İndikatör hesaplaması sonrası oluşan NaN'ları temizle
+        df.dropna(inplace=True)
         return df
     except:
         return None
@@ -78,28 +78,25 @@ def calculate_score(info):
     score = 0
     checks = 0
     
-    # Kriter 1: F/K Oranı (Değerleme)
+    # Kriterler: F/K, Borç, ROE, PD/DD
     pe = info.get('trailingPE')
     if pe is not None:
         checks += 1
-        if 0 < pe < 15: score += 25 # Ucuz
-        elif 15 <= pe < 30: score += 15 # Normal
+        if 0 < pe < 15: score += 25
+        elif 15 <= pe < 30: score += 15
     
-    # Kriter 2: Borç/Özkaynak (Risk)
     de = info.get('debtToEquity')
     if de is not None:
         checks += 1
-        if de < 80: score += 25 # Güvenli
-        elif de < 150: score += 10 # Kabul edilebilir
+        if de < 80: score += 25
+        elif de < 150: score += 10
         
-    # Kriter 3: Karlılık (ROE)
     roe = info.get('returnOnEquity')
     if roe is not None:
         checks += 1
-        if roe > 0.20: score += 25 # Çok iyi
-        elif roe > 0.10: score += 15 # İyi
+        if roe > 0.20: score += 25
+        elif roe > 0.10: score += 15
         
-    # Kriter 4: Fiyat/Defter Değeri (PD/DD)
     pb = info.get('priceToBook')
     if pb is not None:
         checks += 1
@@ -107,28 +104,29 @@ def calculate_score(info):
         elif pb < 4: score += 10
         
     if checks == 0: return 0
-    # Eksik veri varsa bile mevcut verilerle 100 üzerinden normalize et
     final_score = (score / (checks * 25)) * 100 
     return int(final_score)
 
 # --- 3. YAN MENÜ ---
 st.sidebar.header("💎 ProQuant Ultimate")
+st.sidebar.caption("Precision Mode: ON")
 symbol = st.sidebar.text_input("Hisse Kodu", value="THYAO.IS").upper()
-period = st.sidebar.selectbox("Analiz Aralığı", ["1y", "2y", "5y"], index=1)
-btn_analiz = st.sidebar.button("ANALİZİ BAŞLAT 🚀")
 
-st.sidebar.info("💡 **İpuçları:**\n- BIST: `THYAO.IS`, `GARAN.IS`\n- Altın: `ALTIN.IS`\n- Kripto: `BTC-USD`")
+# Varsayılanı '5y' yaptık (Aylık Analiz İçin İdeal)
+period = st.sidebar.selectbox("Analiz Aralığı", ["1y", "2y", "5y", "10y"], index=2)
+btn_analiz = st.sidebar.button("DERİN ANALİZİ BAŞLAT 🚀")
+
+st.sidebar.info("Bu modda yapay zeka seçilen tüm tarihçeyi analiz eder ve 50 tur (epoch) eğitim yapar. İşlem 30-60 saniye sürebilir.")
 
 # --- 4. ANA PROGRAM AKIŞI ---
 if btn_analiz or symbol:
     
-    with st.spinner("Piyasa verileri işleniyor ve yapay zeka hazırlanıyor..."):
+    with st.spinner("Piyasa verileri işleniyor..."):
         tech_data = get_technical_data(symbol, period)
         fund_info = get_fundamental_data(symbol)
     
-    # Veri Kontrolü (Hata Önleyici)
     if tech_data is None or len(tech_data) < 60:
-        st.error("⛔ Yeterli veri bulunamadı. Hisse kodunu kontrol edin veya daha eski bir hisse seçin.")
+        st.error("⛔ Yeterli veri bulunamadı. Hisse kodunu kontrol edin.")
         st.stop()
         
     # --- A. ÖZET EKRANI ---
@@ -145,7 +143,6 @@ if btn_analiz or symbol:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Son Fiyat", f"{current_price:.2f}", f"%{degisim:.2f}")
     
-    # Dinamik Puan Rengi
     score_color = "#00cc96" if score >= 70 else "#ffa500" if score >= 40 else "#ff4b4b"
     with c2:
         st.markdown(f"**Finansal Sağlık**")
@@ -164,25 +161,26 @@ if btn_analiz or symbol:
                 open=tech_data['Open'], high=tech_data['High'],
                 low=tech_data['Low'], close=tech_data['Close'], name='Fiyat'))
     fig.add_trace(go.Scatter(x=tech_data.index, y=tech_data['SMA50'], line=dict(color='orange', width=1), name='SMA 50'))
+    fig.add_trace(go.Scatter(x=tech_data.index, y=tech_data['SMA200'], line=dict(color='blue', width=1), name='SMA 200'))
     fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
     
-    # --- C. YAPAY ZEKA (LSTM) ---
-    st.subheader("🧠 Yapay Zeka (LSTM) Tahmini")
+    # --- C. YAPAY ZEKA (LSTM) - HASSAS MOD ---
+    st.subheader("🧠 Yapay Zeka (LSTM) Simülasyonu")
     
-    with st.spinner("Nöral ağlar eğitiliyor..."):
+    with st.spinner("Nöral ağlar 'Hassas Mod'da (50 Epochs) eğitiliyor. Lütfen bekleyin..."):
         try:
             # 1. Veri Hazırlığı
             data = tech_data[['Close']].values
             scaler = MinMaxScaler(feature_range=(0, 1))
             scaled_data = scaler.fit_transform(data)
             
-            # Son 60 gün (Girdi)
+            # Son 60 gün (Tahmin için)
             X_input = scaled_data[-60:].reshape(1, 60, 1)
             
-            # 2. Model Eğitimi (Hız için son 1 yıl verisi)
-            train_window = 252 
-            train_data = scaled_data[-train_window:] if len(scaled_data) > train_window else scaled_data
+            # 2. HASSAS EĞİTİM (Tüm veriyi kullan)
+            # Hız kısıtlaması kaldırıldı.
+            train_data = scaled_data 
             
             X_train, y_train = [], []
             for i in range(60, len(train_data)):
@@ -200,16 +198,15 @@ if btn_analiz or symbol:
             model.add(Dense(1))
             model.compile(optimizer='adam', loss='mse')
             
-            # Sessiz Eğitim
-            model.fit(X_train, y_train, epochs=5, batch_size=32, verbose=0)
+            # DERİN EĞİTİM: 50 Epochs (Aylık analiz için maksimum doğruluk)
+            model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
             
             # 3. Tahmin
             pred_scaled = model.predict(X_input)
             prediction = float(scaler.inverse_transform(pred_scaled)[0][0])
             ai_change = ((prediction - current_price) / current_price) * 100
             
-            # --- D. KARAR MEKANİZMASI (MANTIK KONTROLÜ) ---
-            # Stop-Loss Mantığı: Şirket kötüyse (Puan düşükse) stop-loss daha dar olsun (Risk alma!)
+            # --- D. KARAR MEKANİZMASI ---
             risk_factor = 1.0 if score < 50 else 1.5 if score < 75 else 2.0
             
             col_ai1, col_ai2 = st.columns([1, 2])
@@ -220,16 +217,14 @@ if btn_analiz or symbol:
                 
             with col_ai2:
                 if prediction > current_price:
-                    # AI Yükseliş Bekliyor
                     stop_loss = current_price - (atr_val * risk_factor)
                     if score >= 60:
-                        st.success(f"🚀 **GÜÇLÜ AL SİNYALİ:** Teknik ve Temel veriler pozitif.\n\n🛡️ Güvenli Stop-Loss: **{stop_loss:.2f}**")
+                        st.success(f"🚀 **GÜÇLÜ AL SİNYALİ (STRONG BUY):**\n\n🛡️ Güvenli Stop-Loss: **{stop_loss:.2f}**")
                     else:
-                        st.warning(f"⚠️ **RİSKLİ AL SİNYALİ:** AI yükseliş bekliyor AMA şirket puanı düşük ({score}).\n\n🛡️ Dar Stop-Loss: **{stop_loss:.2f}** (Yakın takip et!)")
+                        st.warning(f"⚠️ **SPEKÜLATİF YÜKSELİŞ:** AI pozitif ama Şirket Puanı düşük.\n\n🛡️ Dar Stop-Loss: **{stop_loss:.2f}**")
                 else:
-                    # AI Düşüş Bekliyor
                     stop_loss = current_price + (atr_val * risk_factor)
-                    st.error(f"📉 **SAT / BEKLE:** Trend aşağı yönlü görünüyor.\n\n🛡️ Short Stop-Loss: **{stop_loss:.2f}**")
+                    st.error(f"📉 **DÜŞÜŞ BEKLENTİSİ (SELL/WAIT):**\n\n🛡️ Short Stop-Loss: **{stop_loss:.2f}**")
                     
         except Exception as e:
             st.error(f"AI Modeli Hatası: {e}")
