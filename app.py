@@ -53,7 +53,12 @@ if analiz_butonu:
                 # Veri Hazırlığı
                 data = df.filter(['Close'])
                 dataset = data.values
-                current_price = float(dataset[-1])
+                
+                # --- DÜZELTİLEN KISIM BURASI ---
+                # Eskiden: float(dataset[-1]) hata veriyordu.
+                # Şimdi: dataset[-1][0] veya .item() ile içindeki net sayıyı alıyoruz.
+                current_price = float(dataset[-1].item()) 
+                # -------------------------------
                 
                 scaler = MinMaxScaler(feature_range=(0, 1))
                 scaled_data = scaler.fit_transform(dataset)
@@ -77,6 +82,8 @@ if analiz_butonu:
                 last_days = scaled_data[-LOOK_BACK:]
                 last_days_reshaped = np.reshape(last_days, (1, LOOK_BACK, 1))
                 predicted_price_scaled = model.predict(last_days_reshaped)
+                
+                # inverse_transform [1,1] boyutunda döner, [0][0] ile sayıyı alırız
                 tahmin_fiyat = float(scaler.inverse_transform(predicted_price_scaled)[0][0])
                 
                 # 4. SONUÇ GÖSTERİMİ
