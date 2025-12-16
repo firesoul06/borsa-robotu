@@ -9,3 +9,5 @@ scikit-learn
 feedparser
 transformers
 torch
+plotly
+
