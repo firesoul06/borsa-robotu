@@ -41,73 +41,86 @@ if analiz_butonu:
         start_date = end_date - datetime.timedelta(days=365*4) # 4 yıllık veri
         
         try:
+            # Not: yfinance bazı versiyonlarda multi-index döndürebilir, bunu düzeltiyoruz.
             df = yf.download(hisse_kodu, start=start_date, end=end_date, progress=False)
             
+            # Eğer veri boşsa veya hata varsa
             if df.empty:
                 st.error("Veri bulunamadı! Hisse kodunu doğru girdiğinizden emin olun (BIST için sonuna .IS ekleyin).")
             else:
                 # Veriyi Görselleştirme
                 st.subheader("📊 Son 4 Yıllık Fiyat Grafiği")
-                st.line_chart(df['Close'])
+                
+                # 'Close' sütununu güvenli bir şekilde alalım
+                if 'Close' in df.columns:
+                    df_close = df[['Close']]
+                else:
+                    # Bazen yfinance sütun isimlerini değiştirir, ilk sütunu alalım
+                    df_close = df.iloc[:, 0:1]
+                
+                st.line_chart(df_close)
                 
                 # Veri Hazırlığı
-                data = df.filter(['Close'])
-                dataset = data.values
+                dataset = df_close.values # Numpy dizisine çevir
                 
-                # --- DÜZELTİLEN KISIM BURASI ---
-                # Eskiden: float(dataset[-1]) hata veriyordu.
-                # Şimdi: dataset[-1][0] veya .item() ile içindeki net sayıyı alıyoruz.
-                current_price = float(dataset[-1].item()) 
-                # -------------------------------
+                # --- KESİN ÇÖZÜM BURASI ---
+                # dataset[-1] bize [120.5] gibi bir dizi verir.
+                # dataset[-1, 0] diyerek direkt 120.5 sayısını alıyoruz.
+                current_price = float(dataset[-1, 0])
+                # --------------------------
                 
                 scaler = MinMaxScaler(feature_range=(0, 1))
                 scaled_data = scaler.fit_transform(dataset)
                 
-                x_train, y_train = create_dataset(scaled_data, LOOK_BACK, FORECAST_DAYS)
-                x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-                
-                # 2. MODEL EĞİTİMİ
-                model = Sequential()
-                model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-                model.add(Dropout(0.2))
-                model.add(LSTM(units=50, return_sequences=False))
-                model.add(Dropout(0.2))
-                model.add(Dense(units=25))
-                model.add(Dense(units=1))
-                
-                model.compile(optimizer='adam', loss='mean_squared_error')
-                model.fit(x_train, y_train, batch_size=32, epochs=epoch_sayisi, verbose=0)
-                
-                # 3. TAHMİN
-                last_days = scaled_data[-LOOK_BACK:]
-                last_days_reshaped = np.reshape(last_days, (1, LOOK_BACK, 1))
-                predicted_price_scaled = model.predict(last_days_reshaped)
-                
-                # inverse_transform [1,1] boyutunda döner, [0][0] ile sayıyı alırız
-                tahmin_fiyat = float(scaler.inverse_transform(predicted_price_scaled)[0][0])
-                
-                # 4. SONUÇ GÖSTERİMİ
-                degisim = tahmin_fiyat - current_price
-                yuzde_degisim = (degisim / current_price) * 100
-                
-                st.divider()
-                st.subheader("🔮 30 Gün Sonraki Tahmin")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(label="Şu Anki Fiyat", value=f"{current_price:.2f}")
-                
-                with col2:
-                    st.metric(label="Tahmini Fiyat", value=f"{tahmin_fiyat:.2f}", delta=f"{degisim:.2f}")
+                # Yeterli veri var mı kontrolü
+                if len(dataset) < (LOOK_BACK + FORECAST_DAYS + 10):
+                    st.error("Hata: Bu hisse için yeterli geçmiş veri yok. Daha eski bir hisse deneyin.")
+                else:
+                    x_train, y_train = create_dataset(scaled_data, LOOK_BACK, FORECAST_DAYS)
+                    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
                     
-                with col3:
-                    if yuzde_degisim > 0:
-                        st.success(f"Yükseliş Bekleniyor: %{yuzde_degisim:.2f}")
-                    else:
-                        st.error(f"Düşüş Bekleniyor: %{yuzde_degisim:.2f}")
-                
-                st.warning("⚠️ YASAL UYARI: Bu proje sadece eğitim amaçlıdır ve yapay zeka denemesi niteliğindedir. Asla yatırım tavsiyesi olarak değerlendirilmemelidir.")
+                    # 2. MODEL EĞİTİMİ
+                    model = Sequential()
+                    model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
+                    model.add(Dropout(0.2))
+                    model.add(LSTM(units=50, return_sequences=False))
+                    model.add(Dropout(0.2))
+                    model.add(Dense(units=25))
+                    model.add(Dense(units=1))
+                    
+                    model.compile(optimizer='adam', loss='mean_squared_error')
+                    model.fit(x_train, y_train, batch_size=32, epochs=epoch_sayisi, verbose=0)
+                    
+                    # 3. TAHMİN
+                    last_days = scaled_data[-LOOK_BACK:]
+                    last_days_reshaped = np.reshape(last_days, (1, LOOK_BACK, 1))
+                    predicted_price_scaled = model.predict(last_days_reshaped)
+                    
+                    # Tahmini geri normalleştirme
+                    tahmin_fiyat = float(scaler.inverse_transform(predicted_price_scaled)[0][0])
+                    
+                    # 4. SONUÇ GÖSTERİMİ
+                    degisim = tahmin_fiyat - current_price
+                    yuzde_degisim = (degisim / current_price) * 100
+                    
+                    st.divider()
+                    st.subheader("🔮 30 Gün Sonraki Tahmin")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(label="Şu Anki Fiyat", value=f"{current_price:.2f}")
+                    
+                    with col2:
+                        st.metric(label="Tahmini Fiyat", value=f"{tahmin_fiyat:.2f}", delta=f"{degisim:.2f}")
+                        
+                    with col3:
+                        if yuzde_degisim > 0:
+                            st.success(f"Yükseliş Bekleniyor: %{yuzde_degisim:.2f}")
+                        else:
+                            st.error(f"Düşüş Bekleniyor: %{yuzde_degisim:.2f}")
+                    
+                    st.warning("⚠️ YASAL UYARI: Bu proje sadece eğitim amaçlıdır ve yapay zeka denemesi niteliğindedir. Asla yatırım tavsiyesi olarak değerlendirilmemelidir.")
                 
         except Exception as e:
             st.error(f"Bir hata oluştu: {e}")
